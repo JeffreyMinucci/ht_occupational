@@ -30,7 +30,8 @@ logging.info('Beginning data_processing.py script.\n')
 
 # Load the raw OSHA monitoring data
 logging.info('Loading raw OSHA data 1984-2018...')
-if not 'data/osha/osha_monitoring_1984_2018.csv':
+if not os.path.exists('data/osha/osha_monitoring_1984_2018.csv'):
+    logging.info('Unzipping osha monitoring data...\n')
     with zipfile.ZipFile('data/osha/osha_monitoring_1984_2018.zip','r') as zfile:
         zfile.extractall('data/osha')
 osha = pd.read_csv('data/osha/osha_monitoring_1984_2018.csv', dtype={'naics_code':pd.Int32Dtype(), 'sic_code':pd.Int32Dtype()},
