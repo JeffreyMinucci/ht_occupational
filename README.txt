@@ -13,12 +13,6 @@ conda activate occupation
 pip install -r requirements.txt
 ```
 
-3. Next unzip the OSHA data .csv file:
-
-```
-unzip data/osha/osha_monitoring_2984_2018/zip
-```
-
 3. Now you are ready to run the scripts. They should be run in the following order:
 
 ```
