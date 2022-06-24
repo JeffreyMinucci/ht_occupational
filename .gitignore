@@ -1,6 +1,9 @@
 # ignore unzipped raw osha data
 /data/osha/osha_monitoring_1984_2018.csv
 
+# ignore scratch/temp code
+scratch_code.ipynb
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

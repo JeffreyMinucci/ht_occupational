@@ -140,7 +140,6 @@ model_part_2_prefit_file = 'output/model_part2_prefit.file'
 fit2 = pickle.load(open(model_part_2_prefit_file,'rb'))
 
 
-
 # ### Model coefficients plot
 
 logging.info('Printing plot of model coefficients...')

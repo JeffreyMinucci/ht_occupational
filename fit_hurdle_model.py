@@ -198,7 +198,11 @@ null_auc = roc_auc_score(osha_train['detected'],null_probs_train)
 logging.info('Part 1 - Null model training classification accuracy: {:.3f}'.format(null_accuracy))
 logging.info('Part 1 - Null model training ROC area under the curve: {:.3f}'.format(null_auc))
 
-
+#save probabilistic samples - training set part 1
+train_p1_samples = pd.DataFrame(ppc_train['likelihood'].transpose())
+train_p1_samples['preferred_name'] = osha_train['preferred_name'].reset_index(drop=True)
+train_p1_samples['sector_name'] = osha_train['sector_name'].reset_index(drop=True)
+train_p1_samples['subsector_name'] = osha_train['subsector_name'].reset_index(drop=True)
 
 # Training set performance - part 2
 ppc_pt2_train = pm.sample_posterior_predictive(fit2.sample(5000), samples= 1000, random_seed=6584, model=osha_part_2)
@@ -223,6 +227,11 @@ index_ss_shared_pt2.set_value(osha_train.index_ss.values)
 ppc_full_train_pt2 = pm.sample_posterior_predictive(fit2.sample(5000), samples=1000, random_seed=6596, model=osha_part_2) # rows = 500 model predictions, cols = 45800 osha samples
 avg_predictions_pt2_full_train = ppc_full_train_pt2['likelihood'].mean(axis=0)
 
+#save probabilistic samples - training set part 2 
+train_p2_samples = pd.DataFrame(ppc_full_train_pt2['likelihood'].transpose())
+train_p2_samples['preferred_name'] = osha_train['preferred_name'].reset_index(drop=True)
+train_p2_samples['sector_name'] = osha_train['sector_name'].reset_index(drop=True)
+train_p2_samples['subsector_name'] = osha_train['subsector_name'].reset_index(drop=True)
 
 
 # ### Test set performance
@@ -239,6 +248,12 @@ sam = fit1.sample(5000)
 ppc_test = pm.sample_posterior_predictive(sam, samples= 1000, random_seed=13464, model=osha_part_1)
 avg_predictions_test = np.where(ppc_test['likelihood'].mean(axis=0) >= 0.5, 1, 0)
 avg_probs_test = ppc_test['likelihood'].mean(axis=0)
+
+#save probabilistic samples - test set part 1
+test_p1_samples = pd.DataFrame(ppc_test['likelihood'].transpose())
+test_p1_samples['preferred_name'] = osha_test['preferred_name'].reset_index(drop=True)
+test_p1_samples['sector_name'] = osha_test['sector_name'].reset_index(drop=True)
+test_p1_samples['subsector_name'] = osha_test['subsector_name'].reset_index(drop=True)
 
 np.random.seed(986865)
 test_accuracy = accuracy_score(avg_predictions_test, osha_test['detected'])
@@ -268,6 +283,13 @@ index_ss_shared_pt2.set_value(osha_test_c.index_ss.values)
 ppc_p2_test = pm.sample_posterior_predictive(fit2.sample(5000), samples= 1000, random_seed=23094, model=osha_part_2)
 avg_predictions_pt2_test = ppc_p2_test['likelihood'].mean(axis=0)
 
+#save probabilistic samples - test set part 2
+test_p2_samples = pd.DataFrame(ppc_p2_test['likelihood'].transpose())
+test_p2_samples['preferred_name'] = osha_test['preferred_name'].reset_index(drop=True)
+test_p2_samples['sector_name'] = osha_test['sector_name'].reset_index(drop=True)
+test_p2_samples['subsector_name'] = osha_test['subsector_name'].reset_index(drop=True)
+
+#make a combined part 1 and part 2 dataframe
 test_combined = osha_test_c.copy()
 test_combined['pred_log_mgm3'] =  avg_predictions_pt2_test
 test_combined['pred_mgm3'] = 10 ** avg_predictions_pt2_test
@@ -290,29 +312,6 @@ test_mean_rmse = np.sqrt(mean_squared_error(actual,null_predicted))
 logging.info('Part 2 - Null model test RMSE for true positives: {:.2f}'.format(test_mean_rmse))
 
 
-# Plot test set perfomance for concentration
-
-# Plot actual vs predicted for actual positives
-actual_tp = test_combined['log_mgm3'][(test_combined['pred_detected'] == 1) & (test_combined['detected'] == 1)]
-predicted_tp = avg_predictions_pt2_test[(test_combined['pred_detected'] == 1) & (test_combined['detected'] == 1)]
-actual_fn = test_combined['log_mgm3'][(test_combined['pred_detected'] == 0) & (test_combined['detected'] == 1)]
-predicted_fn = avg_predictions_pt2_test[(test_combined['pred_detected'] == 0) & (test_combined['detected'] == 1)]
-plt.scatter(predicted_fn, actual_fn, s=10, color="red", alpha=1, label='Predicted non-detect')
-plt.scatter(predicted_tp, actual_tp, s=10, alpha=1, label='Predicted detect')
-plt.plot([-20, 10], [-20, 10], color='black')
-plt.xlim([-5,6])
-plt.ylim([-5,6])
-plt.title("Test set")
-plt.xlabel('Predicted air concentration (log mg/m3)')
-plt.ylabel('Actual air concentration (log mg/m3)')
-plt.text(-4.5, 2.5, 'RMSE (true pos) = {:.2f}'.format(rmse_test_TPs))
-plt.legend()
-plot_path = 'output/test_set_concentration_plot.png'
-plt.savefig(plot_path)
-logging.info('Plot of test set actual vs predicted concentration saved to: {}'.format(plot_path))
-
-
-
 # Save OSHA model predictions for training and test dataset
 output_train = osha_train.copy()
 output_train['log_mgm3'] =  np.log10(output_train['conc_mgm3'])
@@ -333,5 +332,49 @@ output_test['pred_log_mgm3_final'] = np.where(output_test['pred_detected']==1,ou
 test_out_path = 'output/osha_test_predictions.csv'
 output_test.to_csv(test_out_path, index=False)
 logging.info('OSHA test set with model predictions saved to: {}'.format(test_out_path))
+
+
+# Save full probabilistic predictions for training, test and full datasets
+full_p1_samples = pd.concat([train_p1_samples, test_p1_samples])
+full_p2_samples = pd.concat([train_p2_samples, test_p2_samples])
+samples_out_path = 'output/probabilistic_samples/'
+test_p1_samples.to_csv(samples_out_path + 'test_p1_samples.csv', index=False)
+test_p2_samples.to_csv(samples_out_path + 'test_p2_samples.csv', index=False)
+train_p1_samples.to_csv(samples_out_path + 'train_p1_samples.csv', index=False)
+train_p2_samples.to_csv(samples_out_path + 'train_p2_samples.csv', index=False)
+full_p1_samples.to_csv(samples_out_path + 'full_p1_samples.csv', index=False)
+full_p2_samples.to_csv(samples_out_path + 'full_p2_samples.csv', index=False)
+logging.info("Rows in full p1 samples: {}".format(len(full_p1_samples)))
+logging.info("Rows in full p2 samples: {}".format(len(full_p2_samples)))
+logging.info("Individual probabilistic samples saved to: {}".format(samples_out_path))
+
+# Save table of substance predictions for test and full OSHA data - for Tables S1 and S2
+def substance_predictions_table(detect_probs, concs, min_N = None, sortbyair=False, printout=False):
+    predictions_c = concs.copy()
+    predictions_d = detect_probs.copy()
+    label = ['Detection frequency', 'Air concentration log mgm-3']
+    for i, predictions in enumerate([predictions_d, predictions_c]):
+        if min_N:
+            predictions = predictions[predictions['preferred_name'].isin(predictions.preferred_name.value_counts().index[predictions.preferred_name.value_counts()>=min_N])]
+        conc = predictions.groupby('preferred_name',axis=0).mean()
+        if i == 0:
+            output = pd.DataFrame(conc.quantile(axis=1, q=0.5), columns=['Detection frequency 50th'])
+        else:
+            output[label[i]+' 50th'] = conc.quantile(axis=1,q=0.5)
+        output[label[i]+' 97.5th'] = conc.quantile(axis=1,q=0.975)
+        output[label[i]+' 2.5th'] = conc.quantile(axis=1,q=0.025)
+    if sortbyair:
+        output = output.sort_values(label[1]+' 50th', ascending=False)
+    else:
+        output = output.sort_values(label[0]+' 50th', ascending=False)
+    if printout:
+        print(output)
+    return output
+
+substance_predictions_test = substance_predictions_table(test_p1_samples, test_p2_samples, min_N = 5, sortbyair=True, printout=False)
+substance_predictions_test.to_csv('output/TableS1.csv')
+substance_predictions_test = substance_predictions_table(full_p1_samples, full_p2_samples, min_N = 5, sortbyair=True, printout=False)
+substance_predictions_test.to_csv('output/TableS2.csv')
+logging.info("Substance prediction tables (TableS1 and TableS2) saved to 'output/'")
 
 logging.info('Completed fit_hurdle_model.py script.\n')

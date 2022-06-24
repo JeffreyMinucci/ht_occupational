@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# # Data processing - version date 4/22 - for internal review
+# # Data processing - version date 6/24 - for internal review
 
 # ### Loading data
 
@@ -39,6 +39,28 @@ osha = pd.read_csv('data/osha/osha_monitoring_1984_2018.csv', dtype={'naics_code
 osha.naics_code = osha.naics_code.astype(str)
 osha.sic_code = osha.sic_code.astype(str)
 
+# Load workplace code crosswalk files
+logging.info('Loading SIC and NAICS crosswalk files...')
+sic_naics_2002 = pd.read_csv('data/naics/1987_SIC_to_2002_NAICS_one_to_one.csv', 
+                            dtype={'SIC': str, '2002 NAICS': str},
+                             na_values = ["", " ", "0", "AUX", "Aux", "NaN", "nan"])
+
+# ### record the original 2017 NAICS sector/subsector domain before data cleaning/pre-processing
+# ### But after removing non-air samples
+
+osha_pre_processing = osha.copy()
+osha_pre_processing = osha_pre_processing [osha_pre_processing ['sample_type'].isin(['P','A'])]
+naics_missing = np.where(pd.to_numeric(osha_pre_processing ['naics_code'], errors='coerce') > 1000,0,1)
+sic = osha_pre_processing ['sic_code'].astype(int, errors='ignore').astype(str)
+naics_from_sic = pd.DataFrame(sic).merge(sic_naics_2002[['SIC', '2002 NAICS']].dropna(), left_on='sic_code',
+                         right_on='SIC', how='left')
+osha_pre_processing ['naics_from_sic'] = np.where(naics_missing, naics_from_sic['2002 NAICS'], osha_pre_processing ['naics_code']).astype(str)
+to_2017 = pd.Series(naics_to_2017(osha_pre_processing ['naics_from_sic']))
+osha_pre_processing ['naics_unified'] = to_2017
+osha_pre_processing['sector_name'] = [get_naics_definition(x,2) for x in osha_pre_processing['naics_unified']]
+osha_pre_processing['subsector_name'] = [get_naics_definition(x,3)  for x in osha_pre_processing['naics_unified']]
+original_workplace_domain = osha_pre_processing.groupby(['sector_name','subsector_name']).size().reset_index()
+
 # Load the DSSTox chemical data and OPERA predictions for chemicals in the OSHA dataset
 logging.info('Loading DSSTox chemical data and OPERA predictions for chemicals in the OSHA dataset...')
 chem_data = pd.read_csv('data/osha/osha_chem_properties.csv')
@@ -49,13 +71,6 @@ opera = pd.read_csv('data/osha/chemical_metadata/opera2_physical.csv')
 
 # Load which substances have been randomly assigned to the test set
 test_substances = pd.read_csv('data/test_substances.csv',names = ['i', 'substance']).substance
-
-# Load workplace code crosswalk files
-logging.info('Loading SIC and NAICS crosswalk files...')
-sic_naics_2002 = pd.read_csv('data/naics/1987_SIC_to_2002_NAICS_one_to_one.csv', 
-                            dtype={'SIC': str, '2002 NAICS': str},
-                             na_values = ["", " ", "0", "AUX", "Aux", "NaN", "nan"])
-
 
 osha.drop(osha.columns[0], axis=1, inplace=True)  # drop first column of old indices
 osha['imis_substance_code'] = osha['imis_substance_code'].astype('category')
@@ -78,7 +93,8 @@ logging.info('Initial N, all air samples: {}'.format(len(osha)))
 logging.info('Initial N, personal air samples: {}'.format(len(osha[osha['sample_type'] == 'P'])))
 logging.info('Initial N, area air samples: {}'.format(len(osha[osha['sample_type'] == 'A'])))
 
-# add average mol mass of the substances by matching with DSSTox
+# ### add average mol mass of the substances by matching with DSSTox
+
 logging.info('Dropping substances with no DSSTox match...')
 a = len(osha)
 osha = osha.merge(chem_data[['input', 'average_mass', 'preferred_name', 'dtxsid', 'casrn']], left_on='substance', right_on='input')
@@ -86,6 +102,8 @@ osha = osha[osha['preferred_name'] != '-']
 b = len(osha)
 logging.info('{} rows before adding dsstox ID, {} after'.format(a,b))
 osha = osha.reset_index()
+
+# ### converting units to mg/m3
 
 logging.info('Converting all units to mg/m3...')
 # convert all units to mg/m3
@@ -117,8 +135,10 @@ osha['conc_mgm3'] = convert_mg_m3(osha['sample_result'].to_numpy(), osha['unit_o
 osha['conc_mgm3'] = np.where(osha['qualifier'].str.contains('ND',na=False), 0, osha['conc_mgm3'])  # if non-detect, set conc to 0
 
 
-logging.info('Converting SIC and old NAICS codes to NAICS 2017 and assigning sector/subsector names...')
+# ### update and assign workplace codes
+
 # Convert SIC to NAICS codes
+logging.info('Converting SIC and old NAICS codes to NAICS 2017 and assigning sector/subsector names...')
 naics_missing = np.where(pd.to_numeric(osha['naics_code'], errors='coerce') > 1000,0,1)
 sic = osha['sic_code'].astype(int, errors='ignore').astype(str)
 naics_from_sic = pd.DataFrame(sic).merge(sic_naics_2002[['SIC', '2002 NAICS']].dropna(), left_on='sic_code',
@@ -137,12 +157,18 @@ osha['industry_group_name'] = [get_naics_definition(x,4)  for x in osha['naics_u
 
 # Drop data where the sector or subsector couldn't be defined
 x = len(osha)
+osha_undefined_naics = osha[osha['sector_name'].isin(["Undefined/Multiple"]) | osha['subsector_name'].isin(["Undefined/Multiple"])].copy()
+#osha_undefined_naics.to_csv('output/osha_naics_undefined.csv')
 osha_assigned = osha[~osha['sector_name'].isin(["Undefined/Multiple"])]
 osha_assigned = osha_assigned[~osha_assigned['subsector_name'].isin(["Undefined/Multiple"])]
 osha_assigned = osha_assigned.dropna(subset=['subsector_name', 'sector_name'])
 logging.info('Rows dropped for undefined NAICS sector/subsector: {} out of {}'.format(x-len(osha_assigned),x))
 
 
+# #### remove high extreme outliers + undefined concentrations
+
+# this function scans for extreme high outliers using untransformed mg/m3 data which includes non-detects
+#  in order to consider the entire distribution. Using log-transformed values, we would lose the non-detects.
 def outlier_scan(df, z_cutoff):
     output = df.copy()
     chem_list = df['preferred_name'].unique().copy()
@@ -165,7 +191,13 @@ osha_raw = osha_raw.dropna(subset=['conc_mgm3'])
 logging.info('rows dropped for undefined sample concentration: {} out of {}'.format(x-len(osha_raw),x))
 osha_raw.drop(osha_raw[(osha_raw.inspection_number == '799890') & osha_raw.preferred_name.isin(['2-Chlorotoluene', '4-Chlorotoluene'])].index)  # drop 2 probable errors
 osha_raw['detected'] = np.where(osha_raw['conc_mgm3'] > 0, 1, 0)
+
+# ### Aggregate by inspection number + do extreme outlier scan
+
 logging.info('Aggregating observations by inspection number and taking max...')
+n_per_inspection = osha_raw.groupby(['inspection_number', 'establishment_name', 'preferred_name','naics_unified', 'sector_name',
+                     'subsector_name', 'industry_group_name', 'sample_type'], as_index=False).size()['size']
+logging.info('Max, median and min number of obs per inspection: {}, {} and {}'.format(n_per_inspection.max(), n_per_inspection.median(), n_per_inspection.min()))
 osha_agg = osha_raw.groupby(['inspection_number', 'establishment_name', 'preferred_name','naics_unified', 'sector_name',
                      'subsector_name', 'industry_group_name', 'sample_type'], as_index=False).max(numeric_only=True)
 logging.info('{} rows before aggregating by inspection, {} rows after.'.format(len(osha_raw), len(osha_agg)))
@@ -174,11 +206,14 @@ osha = outlier_scan(osha_agg, 4)  # remove extreme outliers
 logging.info('outliers removed: {} out of {}'.format(len(osha_agg)- len(osha), len(osha_agg)))
 
 
-# Filter out subsectors that don't have sufficient data
+# ### Filter out subsectors that don't have sufficient data
 
 x = len(osha)
 less_than_10_detected = osha.groupby('subsector_name')['detected'].sum().index[osha.groupby('subsector_name')['detected'].sum() < 10]
+osha_less_than_10_detects = osha[osha.subsector_name.isin(less_than_10_detected)].groupby(['sector_name','subsector_name']).agg({'detected':['size','sum']})
+osha_less_than_10_detects.to_csv('output/subsectors_below_10_detects.csv')
 osha = osha[~osha.subsector_name.isin(less_than_10_detected)]
+#logging.info('ubsectors dropped for <10 detects:\n{}\n'.format(less_than_10_detected))
 logging.info('Rows dropped for subsector insufficient data (less than 10 observations): {} out of {}'.format(x-len(osha),x))
 
 
@@ -210,7 +245,7 @@ osha_enc['sector_enc'] = osha_enc['sector_name'].astype('category').cat.codes  #
 osha_enc['subsector_enc'] = osha_enc ['subsector_name'].astype('category').cat.codes  # re-factor
 logging.info('Rows dropped for no OPERA predictions (e.g. inorganics): {} out of {}'.format(x-len(osha_enc),x))
 
-
+# generate interaction terms
 poly = PolynomialFeatures(interaction_only=True, include_bias=False)
 opera_s_ints = poly.fit_transform(osha_enc[opera_cols])
 opera_cols_ints = poly.get_feature_names()[len(opera_cols):]
@@ -265,6 +300,7 @@ indexed_osha_full.drop('index',axis=1).to_csv('output/osha_processed_full.csv', 
 indexed_osha_train.drop('index',axis=1).to_csv('output/osha_processed_training.csv', index=False)
 indexed_osha_test.drop('index',axis=1).to_csv('output/osha_processed_test.csv', index=False)
 sector_subsector_indexes_df.to_csv('output/hurdle_model_sector_subsector_domain.csv',index=False)
+#indexed_osha_full.groupby(['sector_name','subsector_name']).agg({'detected': ['size','sum']}).to_csv('output/osha_model_workplace_domain.csv')
 indexed_osha_full.groupby(['preferred_name','sector_name','subsector_name']).size().reset_index(name='observations').to_csv('output/osha_chem_workplace_domain.csv', index=False)
 logging.info('The processed full dataset has been output to: {}.'.format(os.path.abspath('output/osha_processed_full.csv')))
 logging.info('The processed training dataset has been output to: {}'.format(os.path.abspath('output/osha_processed_training.csv')))
@@ -272,5 +308,11 @@ logging.info('The processed test dataset has been output to: {}'.format(os.path.
 logging.info('A list of sectors and subsectors present in the full dataset has been output to: {}'.format(os.path.abspath('output/hurdle_model_sector_subsector_domain.csv')))
 logging.info('A list of chemical X sector X subsector combos present in the full dataset has been output to: {}'.format(os.path.abspath('output/osha_chem_workplace_domain.csv')))
 
+# ### Define which 2017 NAICS sectors and subsectors were present in the final model and which were dropped in pre-processing
+final_workplace_domain = indexed_osha_full.groupby(['sector_name','subsector_name']).agg({'detected': ['size','sum']}).reset_index()
+original_workplace_domain['Included in final model'] = original_workplace_domain['subsector_name'].isin(final_workplace_domain['subsector_name'])
+original_workplace_domain.columns = ['Sector Name', 'Subsector Name', 'Records', 'Included in final model']
+original_workplace_domain.to_csv('output/osha_workplace_domain.csv', index=False)
+logging.info('A table of 2017 NAICS sectors/subsectors present in the OSHA data has been output to: {}'.format(os.path.abspath('output/osha_workplace_domain.csv')))
 
 logging.info('Completed data_processing.py script.\n')
